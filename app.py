@@ -11,7 +11,7 @@ if "selected_ads" not in st.session_state:
     st.session_state.selected_ads = []
 
 # ---------------- INPUTS ----------------
-project_id = st.text_input("Project ID de Google Cloud")
+project_id = st.text_input("Project ID de Google Cloud", value="subida-fotos-drive")
 marca = st.text_input("Marca", value="John Deere")
 modelo = st.text_input("Modelo", value="6175R")
 
