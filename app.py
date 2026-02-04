@@ -12,7 +12,7 @@ st.set_page_config(page_title="Tasación 2.0", layout="wide")
 st.title("Tasación 2.0 – Barrido de mercado")
 
 # ==================================================
-# GOOGLE CREDENTIALS
+# GOOGLE CREDENTIALS (Service Account)
 # ==================================================
 if "google" in st.secrets:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/gcp_key.json"
@@ -20,17 +20,19 @@ if "google" in st.secrets:
         json.dump(dict(st.secrets["google"]), f)
 
 # ==================================================
-# SESSION STATE
+# SESSION STATE INIT
 # ==================================================
-for key, default in {
+defaults = {
     "last_rows": [],
     "ad_selection": {},
     "selected_ads": [],
     "last_raw_md": None,
     "media_result": None,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
+}
+
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ==================================================
 # INPUTS
@@ -44,7 +46,7 @@ horas_objetivo = st.number_input(
     min_value=0,
     step=100,
     value=0,
-    help="Si es 0, no se filtra por horas. Si se indica, se aplica ±1000 h."
+    help="Si es 0 no se filtra. Si se indica, se aplica ±1000 h."
 )
 
 # ==================================================
@@ -127,65 +129,72 @@ if st.button("🔍 Buscar mercado"):
 
         rows = parse_markdown_table(resultado_md)
 
-        # -------- FILTROS --------
+        # -------- FILTROS AUTOMÁTICOS --------
         filtradas = []
         for r in rows:
+            # precio
             if not has_valid_price(r.get("Precio", "")):
                 continue
 
+            # horas
             horas = parse_hours(r.get("Horas", ""))
             if horas is None:
                 continue
 
-            if horas_objetivo > 0:
-                if abs(horas - horas_objetivo) > 1000:
-                    continue
+            # filtro ±1000 horas
+            if horas_objetivo > 0 and abs(horas - horas_objetivo) > 1000:
+                continue
 
             filtradas.append(r)
 
         st.session_state.last_rows = filtradas
+
+        # inicializar selección SOLO una vez
         st.session_state.ad_selection = {
             r.get("ID", ""): True for r in filtradas
         }
+
         st.session_state.media_result = None
 
 # ==================================================
-# RENDER RESULTADOS
+# RENDER LISTA + CHECKBOXES (VISIBLE)
 # ==================================================
 if st.session_state.last_rows:
     st.markdown("## Comparables encontrados")
 
     for r in st.session_state.last_rows:
         rid = r.get("ID", "")
-        col1, col2 = st.columns([1, 12])
+
+        col1, col2 = st.columns([2, 10])
 
         with col1:
             use = st.checkbox(
-                "",
+                "Seleccionar",
                 key=f"chk_{rid}",
                 value=st.session_state.ad_selection.get(rid, True)
             )
-
-        st.session_state.ad_selection[rid] = use
+            st.session_state.ad_selection[rid] = use
 
         with col2:
             url = extract_url(r.get("Enlace", ""))
             st.markdown(
                 f"**{rid}** | {r.get('Portal','')} | "
-                f"Año: {r.get('Año','')} | Horas: {r.get('Horas','')} | "
-                f"Precio: {r.get('Precio','')} | País: {r.get('País','')}"
+                f"Año: {r.get('Año','')} | "
+                f"Horas: {r.get('Horas','')} | "
+                f"Precio: {r.get('Precio','')} | "
+                f"País: {r.get('País','')}"
                 + (f" | [Ver anuncio]({url})" if url else "")
             )
 
     st.session_state.selected_ads = [
         r for r in st.session_state.last_rows
-        if st.session_state.ad_selection.get(r.get("ID",""), False)
+        if st.session_state.ad_selection.get(r.get("ID", ""), False)
     ]
 
     st.markdown(f"### Anuncios seleccionados: {len(st.session_state.selected_ads)}")
 
 # ==================================================
-# TASACIÓN (BOTÓN)
+# TASACIÓN (BOTÓN CLARO)
 # ==================================================
 if st.session_state.selected_ads:
     st.markdown("## Tasación")
@@ -205,7 +214,7 @@ if st.session_state.selected_ads:
                 "media": media,
                 "min": min(prices),
                 "max": max(prices),
-                "n": len(prices)
+                "n": len(prices),
             }
 
 # ==================================================
@@ -220,7 +229,7 @@ if st.session_state.media_result:
     st.write(f"Precio máximo: {res['max']:,.0f} €")
 
 # ==================================================
-# DEBUG
+# DEBUG (NO MOLESTA)
 # ==================================================
 if st.session_state.last_raw_md:
     st.markdown("---")
