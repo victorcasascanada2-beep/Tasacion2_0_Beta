@@ -12,7 +12,7 @@ st.set_page_config(page_title="Tasación 2.0", layout="wide")
 st.title("Tasación 2.0 – Barrido de mercado")
 
 # ==================================================
-# GOOGLE CREDENTIALS (Service Account via Secrets)
+# GOOGLE CREDENTIALS
 # ==================================================
 if "google" in st.secrets:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/gcp_key.json"
@@ -20,19 +20,17 @@ if "google" in st.secrets:
         json.dump(dict(st.secrets["google"]), f)
 
 # ==================================================
-# SESSION STATE INIT
+# SESSION STATE
 # ==================================================
-if "last_rows" not in st.session_state:
-    st.session_state.last_rows = []
-
-if "ad_selection" not in st.session_state:
-    st.session_state.ad_selection = {}
-
-if "selected_ads" not in st.session_state:
-    st.session_state.selected_ads = []
-
-if "last_raw_md" not in st.session_state:
-    st.session_state.last_raw_md = None
+for key, default in {
+    "last_rows": [],
+    "ad_selection": {},
+    "selected_ads": [],
+    "last_raw_md": None,
+    "media_result": None,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # ==================================================
 # INPUTS
@@ -83,37 +81,38 @@ def extract_url(cell):
 def has_valid_price(price: str) -> bool:
     if not price:
         return False
-
     p = price.lower()
-    invalid_keywords = [
-        "consultar",
-        "a consultar",
-        "a convenir",
-        "consult",
-        "precio a",
-        "-"
-    ]
-
-    if any(k in p for k in invalid_keywords):
+    invalid = ["consultar", "a convenir", "consult", "precio a", "-"]
+    if any(k in p for k in invalid):
         return False
+    return any(c.isdigit() for c in price)
 
-    return any(char.isdigit() for char in price)
+
+def parse_price(price_str: str):
+    if not price_str:
+        return None
+    cleaned = re.sub(r"[^\d]", "", price_str)
+    return int(cleaned) if cleaned else None
 
 
 def parse_hours(hours_str: str):
     if not hours_str:
         return None
-
     cleaned = re.sub(r"[^\d]", "", hours_str)
-    if not cleaned:
-        return None
+    return int(cleaned) if cleaned else None
 
-    return int(cleaned)
+
+def truncated_mean(values: list[int]):
+    if len(values) < 3:
+        return None
+    values = sorted(values)
+    trimmed = values[1:-1]
+    return sum(trimmed) / len(trimmed)
 
 # ==================================================
 # ACTION: MARKET SCAN
 # ==================================================
-if st.button("Buscar mercado"):
+if st.button("🔍 Buscar mercado"):
     if not project_id:
         st.error("Introduce el Project ID de Google Cloud")
     else:
@@ -128,43 +127,36 @@ if st.button("Buscar mercado"):
 
         rows = parse_markdown_table(resultado_md)
 
-        # ------------------ FILTROS AUTOMÁTICOS ------------------
-        rows_filtradas = []
-
+        # -------- FILTROS --------
+        filtradas = []
         for r in rows:
-            # Precio válido
             if not has_valid_price(r.get("Precio", "")):
                 continue
 
-            # Horas válidas
-            horas_anuncio = parse_hours(r.get("Horas", ""))
-            if horas_anuncio is None:
+            horas = parse_hours(r.get("Horas", ""))
+            if horas is None:
                 continue
 
-            # Filtro ±1000 horas si hay horas objetivo
             if horas_objetivo > 0:
-                if abs(horas_anuncio - horas_objetivo) > 1000:
+                if abs(horas - horas_objetivo) > 1000:
                     continue
 
-            rows_filtradas.append(r)
+            filtradas.append(r)
 
-        st.session_state.last_rows = rows_filtradas
-
-        # Inicializar selección SOLO si está vacía
-        if not st.session_state.ad_selection:
-            st.session_state.ad_selection = {
-                r.get("ID", ""): True for r in rows_filtradas
-            }
+        st.session_state.last_rows = filtradas
+        st.session_state.ad_selection = {
+            r.get("ID", ""): True for r in filtradas
+        }
+        st.session_state.media_result = None
 
 # ==================================================
-# RENDER RESULTADOS (ESTABLE)
+# RENDER RESULTADOS
 # ==================================================
 if st.session_state.last_rows:
-    st.markdown("## Resultados comparables")
+    st.markdown("## Comparables encontrados")
 
     for r in st.session_state.last_rows:
         rid = r.get("ID", "")
-
         col1, col2 = st.columns([1, 12])
 
         with col1:
@@ -187,13 +179,48 @@ if st.session_state.last_rows:
 
     st.session_state.selected_ads = [
         r for r in st.session_state.last_rows
-        if st.session_state.ad_selection.get(r.get("ID", ""), False)
+        if st.session_state.ad_selection.get(r.get("ID",""), False)
     ]
 
     st.markdown(f"### Anuncios seleccionados: {len(st.session_state.selected_ads)}")
 
 # ==================================================
-# DEBUG (SALIDA COMPLETA DEL MODELO)
+# TASACIÓN (BOTÓN)
+# ==================================================
+if st.session_state.selected_ads:
+    st.markdown("## Tasación")
+
+    if st.button("📊 Calcular media de mercado"):
+        prices = []
+        for r in st.session_state.selected_ads:
+            p = parse_price(r.get("Precio", ""))
+            if p:
+                prices.append(p)
+
+        if len(prices) < 3:
+            st.warning("Se necesitan al menos 3 anuncios para una media truncada.")
+        else:
+            media = truncated_mean(prices)
+            st.session_state.media_result = {
+                "media": media,
+                "min": min(prices),
+                "max": max(prices),
+                "n": len(prices)
+            }
+
+# ==================================================
+# RESULTADO TASACIÓN
+# ==================================================
+if st.session_state.media_result:
+    res = st.session_state.media_result
+    st.success("Tasación calculada")
+    st.metric("Precio medio de mercado", f"{res['media']:,.0f} €")
+    st.write(f"Anuncios usados: {res['n']}")
+    st.write(f"Precio mínimo: {res['min']:,.0f} €")
+    st.write(f"Precio máximo: {res['max']:,.0f} €")
+
+# ==================================================
+# DEBUG
 # ==================================================
 if st.session_state.last_raw_md:
     st.markdown("---")
