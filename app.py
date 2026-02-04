@@ -5,38 +5,38 @@ import json
 
 from backend.market_scan import run_market_scan
 
-# --------------------------------------------------
+# ==================================================
 # CONFIG STREAMLIT
-# --------------------------------------------------
+# ==================================================
 st.set_page_config(page_title="Tasación 2.0", layout="wide")
 st.title("Tasación 2.0 – Barrido de mercado")
 
-# --------------------------------------------------
-# GOOGLE CREDENTIALS (ADC via Service Account)
-# --------------------------------------------------
-# Streamlit Secrets ya entrega el JSON correcto
-# NO tocamos la clave
-
+# ==================================================
+# GOOGLE CREDENTIALS (Service Account via Secrets)
+# ==================================================
 if "google" in st.secrets:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/gcp_key.json"
     with open("/tmp/gcp_key.json", "w") as f:
         json.dump(dict(st.secrets["google"]), f)
 
-# --------------------------------------------------
+# ==================================================
 # SESSION STATE INIT
-# --------------------------------------------------
-if "selected_ads" not in st.session_state:
-    st.session_state.selected_ads = []
+# ==================================================
+if "last_rows" not in st.session_state:
+    st.session_state.last_rows = []
 
 if "ad_selection" not in st.session_state:
     st.session_state.ad_selection = {}
 
-if "last_rows" not in st.session_state:
-    st.session_state.last_rows = []
+if "selected_ads" not in st.session_state:
+    st.session_state.selected_ads = []
 
-# --------------------------------------------------
+if "last_raw_md" not in st.session_state:
+    st.session_state.last_raw_md = None
+
+# ==================================================
 # INPUTS
-# --------------------------------------------------
+# ==================================================
 project_id = st.text_input("Project ID de Google Cloud", value="")
 marca = st.text_input("Marca", value="John Deere")
 modelo = st.text_input("Modelo", value="6175R")
@@ -46,18 +46,13 @@ horas_objetivo = st.number_input(
     min_value=0,
     step=100,
     value=0,
-    help="Introduce las horas del tractor objetivo. Si es 0, no se filtra por horas."
+    help="Si es 0, no se filtra por horas. Si se indica, se aplica ±1000 h."
 )
 
-# --------------------------------------------------
+# ==================================================
 # HELPERS
-# --------------------------------------------------
+# ==================================================
 def parse_markdown_table(md_text):
-    """
-    Parsea una tabla Markdown simple a lista de dicts.
-    Columnas esperadas:
-    ID | Portal | Año | Horas | Precio | País | Enlace
-    """
     rows = []
     lines = [l.strip() for l in md_text.splitlines() if l.strip()]
     table_lines = [l for l in lines if l.startswith("|")]
@@ -86,14 +81,10 @@ def extract_url(cell):
 
 
 def has_valid_price(price: str) -> bool:
-    """
-    Devuelve True solo si el precio parece real (numérico).
-    """
     if not price:
         return False
 
     p = price.lower()
-
     invalid_keywords = [
         "consultar",
         "a consultar",
@@ -110,10 +101,6 @@ def has_valid_price(price: str) -> bool:
 
 
 def parse_hours(hours_str: str):
-    """
-    Extrae horas como entero desde texto.
-    Devuelve int o None si no es válido.
-    """
     if not hours_str:
         return None
 
@@ -123,9 +110,9 @@ def parse_hours(hours_str: str):
 
     return int(cleaned)
 
-# --------------------------------------------------
+# ==================================================
 # ACTION: MARKET SCAN
-# --------------------------------------------------
+# ==================================================
 if st.button("Buscar mercado"):
     if not project_id:
         st.error("Introduce el Project ID de Google Cloud")
@@ -137,26 +124,24 @@ if st.button("Buscar mercado"):
                 modelo=modelo
             )
 
-        # DEBUG opcional
-        with st.expander("Ver salida completa del modelo (debug)", expanded=False):
-            st.markdown(resultado_md)
+        st.session_state.last_raw_md = resultado_md
 
         rows = parse_markdown_table(resultado_md)
 
-        # ---- FILTROS AUTOMÁTICOS ----
+        # ------------------ FILTROS AUTOMÁTICOS ------------------
         rows_filtradas = []
 
         for r in rows:
-            # 1) Precio válido
+            # Precio válido
             if not has_valid_price(r.get("Precio", "")):
                 continue
 
-            # 2) Horas válidas
+            # Horas válidas
             horas_anuncio = parse_hours(r.get("Horas", ""))
             if horas_anuncio is None:
                 continue
 
-            # 3) Filtro ±1000 horas si hay horas objetivo
+            # Filtro ±1000 horas si hay horas objetivo
             if horas_objetivo > 0:
                 if abs(horas_anuncio - horas_objetivo) > 1000:
                     continue
@@ -165,16 +150,17 @@ if st.button("Buscar mercado"):
 
         st.session_state.last_rows = rows_filtradas
 
-        # Inicializar selección
-        st.session_state.ad_selection = {
-            r.get("ID", ""): True for r in rows_filtradas
-        }
+        # Inicializar selección SOLO si está vacía
+        if not st.session_state.ad_selection:
+            st.session_state.ad_selection = {
+                r.get("ID", ""): True for r in rows_filtradas
+            }
 
-# --------------------------------------------------
+# ==================================================
 # RENDER RESULTADOS (ESTABLE)
-# --------------------------------------------------
+# ==================================================
 if st.session_state.last_rows:
-    st.markdown("## Filtrar anuncios (selecciona / desmarca)")
+    st.markdown("## Resultados comparables")
 
     for r in st.session_state.last_rows:
         rid = r.get("ID", "")
@@ -199,21 +185,17 @@ if st.session_state.last_rows:
                 + (f" | [Ver anuncio]({url})" if url else "")
             )
 
-    # Selección final
     st.session_state.selected_ads = [
         r for r in st.session_state.last_rows
-        if st.session_state.ad_selection.get(r.get("ID",""), False)
+        if st.session_state.ad_selection.get(r.get("ID", ""), False)
     ]
 
     st.markdown(f"### Anuncios seleccionados: {len(st.session_state.selected_ads)}")
 
-# --------------------------------------------------
-# SELECCIÓN PERSISTENTE
-# --------------------------------------------------
-st.markdown("---")
-st.markdown("## Selección actual (persistente)")
-
-if st.session_state.selected_ads:
-    st.json(st.session_state.selected_ads)
-else:
-    st.info("Aún no hay anuncios seleccionados.")
+# ==================================================
+# DEBUG (SALIDA COMPLETA DEL MODELO)
+# ==================================================
+if st.session_state.last_raw_md:
+    st.markdown("---")
+    with st.expander("🛠 Ver salida completa del modelo (debug)", expanded=False):
+        st.markdown(st.session_state.last_raw_md)
