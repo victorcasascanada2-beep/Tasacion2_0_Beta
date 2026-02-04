@@ -12,10 +12,10 @@ st.set_page_config(page_title="Tasación 2.0", layout="wide")
 st.title("Tasación 2.0 – Barrido de mercado")
 
 # --------------------------------------------------
-# GOOGLE CREDENTIALS (CORRECTO)
+# GOOGLE CREDENTIALS (ADC via Service Account)
 # --------------------------------------------------
-# Streamlit YA entrega el private_key bien formado.
-# NO hay que tocarlo.
+# Streamlit Secrets ya entrega el JSON correcto
+# No tocamos la clave
 
 if "google" in st.secrets:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/gcp_key.json"
@@ -23,10 +23,16 @@ if "google" in st.secrets:
         json.dump(dict(st.secrets["google"]), f)
 
 # --------------------------------------------------
-# SESSION STATE
+# SESSION STATE INIT
 # --------------------------------------------------
 if "selected_ads" not in st.session_state:
     st.session_state.selected_ads = []
+
+if "ad_selection" not in st.session_state:
+    st.session_state.ad_selection = {}
+
+if "last_rows" not in st.session_state:
+    st.session_state.last_rows = []
 
 # --------------------------------------------------
 # INPUTS
@@ -66,7 +72,7 @@ def extract_url(cell):
     return m.group(1) if m else ""
 
 # --------------------------------------------------
-# ACTION
+# ACTION: MARKET SCAN
 # --------------------------------------------------
 if st.button("Buscar mercado"):
     if not project_id:
@@ -84,39 +90,55 @@ if st.button("Buscar mercado"):
 
         rows = parse_markdown_table(resultado_md)
 
-        if not rows:
-            st.warning("No se pudo extraer una tabla estructurada.")
-        else:
-            st.markdown("## Filtrar anuncios (selecciona / desmarca)")
-            selected = []
+        # Guardamos las filas para renders posteriores
+        st.session_state.last_rows = rows
 
-            for r in rows:
-                col1, col2 = st.columns([1, 12])
-
-                with col1:
-                    use = st.checkbox(
-                        "",
-                        value=True,
-                        key=f"chk_{r.get('ID','')}"
-                    )
-
-                with col2:
-                    url = extract_url(r.get("Enlace", ""))
-                    st.markdown(
-                        f"**{r.get('ID','')}** | {r.get('Portal','')} | "
-                        f"Año: {r.get('Año','')} | Horas: {r.get('Horas','')} | "
-                        f"Precio: {r.get('Precio','')} | País: {r.get('País','')}"
-                        + (f" | [Ver anuncio]({url})" if url else "")
-                    )
-
-                if use:
-                    selected.append(r)
-
-            st.session_state.selected_ads = selected
-            st.markdown(f"### Anuncios seleccionados: {len(selected)}")
+        # Inicializar selección SOLO la primera vez
+        if rows and not st.session_state.ad_selection:
+            st.session_state.ad_selection = {
+                r.get("ID", ""): True for r in rows
+            }
 
 # --------------------------------------------------
-# PERSISTENTE
+# RENDER RESULTADOS (ESTABLE)
+# --------------------------------------------------
+if st.session_state.last_rows:
+    st.markdown("## Filtrar anuncios (selecciona / desmarca)")
+
+    for r in st.session_state.last_rows:
+        rid = r.get("ID", "")
+
+        col1, col2 = st.columns([1, 12])
+
+        with col1:
+            use = st.checkbox(
+                "",
+                key=f"chk_{rid}",
+                value=st.session_state.ad_selection.get(rid, True)
+            )
+
+        # Actualizamos SOLO el estado
+        st.session_state.ad_selection[rid] = use
+
+        with col2:
+            url = extract_url(r.get("Enlace", ""))
+            st.markdown(
+                f"**{rid}** | {r.get('Portal','')} | "
+                f"Año: {r.get('Año','')} | Horas: {r.get('Horas','')} | "
+                f"Precio: {r.get('Precio','')} | País: {r.get('País','')}"
+                + (f" | [Ver anuncio]({url})" if url else "")
+            )
+
+    # Construir selección FINAL desde el estado
+    st.session_state.selected_ads = [
+        r for r in st.session_state.last_rows
+        if st.session_state.ad_selection.get(r.get("ID",""), False)
+    ]
+
+    st.markdown(f"### Anuncios seleccionados: {len(st.session_state.selected_ads)}")
+
+# --------------------------------------------------
+# SELECCIÓN PERSISTENTE (DEBUG / CONTROL)
 # --------------------------------------------------
 st.markdown("---")
 st.markdown("## Selección actual (persistente)")
