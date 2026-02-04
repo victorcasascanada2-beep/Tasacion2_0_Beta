@@ -1,24 +1,52 @@
 import streamlit as st
 import re
+import os
+import json
+
 from backend.market_scan import run_market_scan
 
-# ---------------- CONFIG ----------------
+# --------------------------------------------------
+# CONFIG STREAMLIT
+# --------------------------------------------------
 st.set_page_config(page_title="Tasación 2.0", layout="wide")
 st.title("Tasación 2.0 – Barrido de mercado")
 
-# ---------------- SESSION STATE ----------------
+# --------------------------------------------------
+# GOOGLE CREDENTIALS (REPARACIÓN AUTOMÁTICA)
+# --------------------------------------------------
+# Esto permite que funcione aunque el private_key
+# venga en formato multilínea desde secrets.toml
+
+if "google" in st.secrets:
+    google_creds = dict(st.secrets["google"])
+
+    if "private_key" in google_creds:
+        # Repara saltos de línea reales → \n
+        google_creds["private_key"] = google_creds["private_key"].replace("\n", "\\n")
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/gcp_key.json"
+    with open("/tmp/gcp_key.json", "w") as f:
+        json.dump(google_creds, f)
+
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
 if "selected_ads" not in st.session_state:
     st.session_state.selected_ads = []
 
-# ---------------- INPUTS ----------------
-project_id = st.text_input("Project ID de Google Cloud", value="subida-fotos-drive")
+# --------------------------------------------------
+# INPUTS
+# --------------------------------------------------
+project_id = st.text_input("Project ID de Google Cloud", value="")
 marca = st.text_input("Marca", value="John Deere")
 modelo = st.text_input("Modelo", value="6175R")
 
-# ---------------- HELPERS ----------------
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
 def parse_markdown_table(md_text):
     """
-    Parsea una tabla Markdown simple a una lista de diccionarios.
+    Parsea una tabla Markdown simple a lista de dicts.
     Espera columnas:
     ID | Portal | Año | Horas | Precio | País | Enlace
     """
@@ -34,8 +62,7 @@ def parse_markdown_table(md_text):
     for line in table_lines[2:]:
         cols = [c.strip() for c in line.strip("|").split("|")]
         if len(cols) == len(headers):
-            row = dict(zip(headers, cols))
-            rows.append(row)
+            rows.append(dict(zip(headers, cols)))
 
     return rows
 
@@ -49,12 +76,14 @@ def extract_url(cell):
     m = re.search(r"(https?://\S+)", cell)
     return m.group(1) if m else ""
 
-# ---------------- ACTION ----------------
+# --------------------------------------------------
+# ACTION
+# --------------------------------------------------
 if st.button("Buscar mercado"):
     if not project_id:
         st.error("Introduce el Project ID de Google Cloud")
     else:
-        with st.spinner("Buscando anuncios reales..."):
+        with st.spinner("Buscando anuncios reales en mercado..."):
             resultado_md = run_market_scan(
                 project_id=project_id,
                 marca=marca,
@@ -94,12 +123,14 @@ if st.button("Buscar mercado"):
                 if use:
                     selected.append(r)
 
-            # GUARDAR SELECCIÓN EN MEMORIA
+            # Guardar selección en sesión
             st.session_state.selected_ads = selected
 
             st.markdown(f"### Anuncios seleccionados: {len(selected)}")
 
-# ---------------- PERSISTENTE ----------------
+# --------------------------------------------------
+# SELECCIÓN PERSISTENTE
+# --------------------------------------------------
 st.markdown("---")
 st.markdown("## Selección actual (persistente)")
 
